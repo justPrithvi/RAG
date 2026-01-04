@@ -110,6 +110,8 @@ pip install -r requirements.txt
 
 4. **Run the server**:
 ```bash
+# Activate virtual env
+source venv/bin/activate
 # Development mode with auto-reload (like nodemon)
 uvicorn app.main:app --reload --port 8000
 

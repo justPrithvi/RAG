@@ -1,0 +1,24 @@
+# Web Framework (like Express.js)
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+
+# Configuration (like @nestjs/config)
+pydantic==2.5.3
+pydantic-settings==2.1.0
+python-dotenv==1.0.0
+
+# CORS and middleware
+python-multipart==0.0.6
+
+# Add these as you learn and implement:
+# RAG and Vector DB (uncomment when ready)
+# langchain==0.1.6
+# chromadb==0.4.22
+
+# Embeddings and LLMs (uncomment when ready)
+# openai==1.10.0
+# sentence-transformers==2.3.1
+
+# Document processing (uncomment when ready)
+# pypdf==4.0.0
+

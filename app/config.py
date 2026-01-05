@@ -24,6 +24,9 @@ class Settings(BaseSettings):
         "http://localhost:3001",  # NestJS backend
     ]
     
+    # Authentication
+    AUTH_SERVICE_URL: str = "http://localhost:5001"  # NestJS auth service
+    
     # Vector DB (will add later)
     # VECTOR_DB_URL: str = ""
     

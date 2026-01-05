@@ -3,9 +3,12 @@ Documents Routes - SKELETON
 Similar to a DocumentsController in NestJS
 Handles API endpoints for RAG operations
 """
-from fastapi import APIRouter, HTTPException, Body
+from fastapi import APIRouter, HTTPException, Body, UploadFile, File, Form
 from app.models.document import DocumentUploadResponse, QueryRequest, QueryResponse
 from app.services.document_service import DocumentService
+from app.utils.text_cleaner import TextCleaner
+from pypdf import PdfReader
+import io
 
 # Create router (like @Controller('documents') in NestJS)
 router = APIRouter()
@@ -16,49 +19,130 @@ router = APIRouter()
 document_service = DocumentService()
 
 
-@router.post("/process", response_model=DocumentUploadResponse)
-async def process_document(
-    document_id: str = Body(..., description="Document ID from main app"),
-    text: str = Body(..., description="Extracted text from document"),
-    metadata: dict = Body(None, description="Optional metadata")
+@router.post("/upload")
+async def upload_file(
+    file: UploadFile = File(...),
+    documentId: str = Form(...)
 ):
     """
-    Process document text sent from main app
+    Upload a file and read its content
     
-    Flow:
-    1. Main app (React + NestJS) handles file upload
-    2. Main app extracts text from file
-    3. Main app sends text here for RAG processing
-    4. This service chunks, embeds, and stores
+    Form fields:
+    - file: The file to upload
+    - documentId: The original document ID from your main DB
     
-    Similar to @Post('process') in NestJS
+    Supports: PDF, TXT, and other text-based files
+    Image and video support will be added later
     
-    Example request body:
-    {
-        "document_id": "doc_123",
-        "text": "This is the extracted text from the PDF...",
-        "metadata": {
-            "filename": "report.pdf",
-            "user_id": "user_456",
-            "upload_date": "2024-01-04"
-        }
-    }
+    The text is automatically cleaned and ready for chunking.
+    
+    Similar to @Post('upload') @UseInterceptors(FileInterceptor('file')) in NestJS
     """
-    try:
-        result = await document_service.process_document(
-            text=text,
-            document_id=document_id,
-            metadata=metadata
+    # Store in snake_case for Python convention
+    document_id = documentId
+    # Get file extension
+    filename = file.filename or ""
+    file_extension = filename.split(".")[-1].lower() if "." in filename else ""
+    
+    # Block image and video files for now
+    image_extensions = {"jpg", "jpeg", "png", "gif", "bmp", "svg", "webp", "ico"}
+    video_extensions = {"mp4", "avi", "mov", "wmv", "flv", "mkv", "webm"}
+    
+    if file_extension in image_extensions:
+        raise HTTPException(
+            status_code=400, 
+            detail="Image files are not supported yet. Coming soon!"
         )
+    
+    if file_extension in video_extensions:
+        raise HTTPException(
+            status_code=400, 
+            detail="Video files are not supported yet. Coming soon!"
+        )
+    
+    try:
+        # Read file content
+        content = await file.read()
+        file_size = len(content)
+        
+        # Extract text based on file type
+        raw_text = ""
+        
+        if file_extension == "pdf":
+            # Parse PDF
+            try:
+                pdf_file = io.BytesIO(content)
+                pdf_reader = PdfReader(pdf_file)
+                
+                # Extract text from all pages
+                raw_text = ""
+                for page in pdf_reader.pages:
+                    raw_text += page.extract_text() + "\n"
+                
+                if not raw_text.strip():
+                    raise HTTPException(
+                        status_code=400,
+                        detail="PDF appears to be empty or text could not be extracted (might be image-based PDF)"
+                    )
+            except Exception as e:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Error parsing PDF: {str(e)}"
+                )
+        
+        elif file_extension in ["txt", "md", "csv", "json", "xml"]:
+            # Plain text files
+            try:
+                raw_text = content.decode('utf-8')
+            except UnicodeDecodeError:
+                try:
+                    raw_text = content.decode('latin-1')
+                except Exception:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Unable to decode text file. Please ensure it's in UTF-8 or Latin-1 encoding."
+                    )
+        
+        else:
+            # Try to decode as text
+            try:
+                raw_text = content.decode('utf-8')
+            except UnicodeDecodeError:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported file type: .{file_extension}. Supported types: PDF, TXT, MD, CSV"
+                )
+        
+        # Clean the text for chunking
+        cleaned_text = TextCleaner.clean_for_chunking(raw_text)
+        
+        if not cleaned_text.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="No text content found in the file after processing"
+            )
         
         return {
-            "message": "Document processed successfully",
-            "document_id": result["document_id"],
-            "chunks_created": result["chunks_created"]
+            "message": "File uploaded and processed successfully",
+            "document_id": document_id,
+            "filename": filename,
+            "file_size": file_size,
+            "file_extension": file_extension,
+            "content_type": file.content_type,
+            "raw_content_length": len(raw_text),
+            "cleaned_content_length": len(cleaned_text),
+            "content_preview": cleaned_text[:500] + "..." if len(cleaned_text) > 500 else cleaned_text,
+            "cleaned_content": cleaned_text,
+            "ready_for_chunking": True
         }
     
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error processing file: {str(e)}"
+        )
 
 
 @router.post("/query", response_model=QueryResponse)

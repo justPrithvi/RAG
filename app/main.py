@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.api.routes import health, documents
+from app.middleware.auth import AuthMiddleware
 
 # Create FastAPI app instance (like creating NestJS app)
 app = FastAPI(
@@ -21,6 +22,12 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+# Authentication middleware (validates JWT with NestJS backend)
+app.add_middleware(
+    AuthMiddleware,
+    auth_service_url=settings.AUTH_SERVICE_URL
 )
 
 # Register routes (like importing modules in NestJS)

@@ -10,6 +10,9 @@ python-dotenv==1.0.0
 # CORS and middleware
 python-multipart==0.0.6
 
+# HTTP client for auth validation
+httpx==0.26.0
+
 # Add these as you learn and implement:
 # RAG and Vector DB (uncomment when ready)
 # langchain==0.1.6
@@ -19,6 +22,6 @@ python-multipart==0.0.6
 # openai==1.10.0
 # sentence-transformers==2.3.1
 
-# Document processing (uncomment when ready)
-# pypdf==4.0.0
+# Document processing
+pypdf==4.0.0
 

@@ -5,7 +5,7 @@ Think of this like your main.ts in NestJS
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.api.routes import health, documents
+from app.api.routes import health, documents, chat
 from app.middleware.auth import AuthMiddleware
 
 # Create FastAPI app instance (like creating NestJS app)
@@ -33,6 +33,7 @@ app.add_middleware(
 # Register routes (like importing modules in NestJS)
 app.include_router(health.router, prefix="/api", tags=["health"])
 app.include_router(documents.router, prefix="/api/documents", tags=["documents"])
+app.include_router(chat.router, prefix="/api", tags=["chat"])
 
 # Root endpoint
 @app.get("/")
@@ -49,6 +50,14 @@ async def startup_event():
     print("🚀 RAG Backend Service starting...")
     print(f"📝 Environment: {settings.ENVIRONMENT}")
     print(f"🌐 CORS enabled for: {settings.ALLOWED_ORIGINS}")
+    
+    # Initialize database (create tables if not exist)
+    from app.database import init_db
+    try:
+        init_db()
+    except Exception as e:
+        print(f"⚠️  Database initialization failed: {e}")
+        print("💡 Make sure PostgreSQL is running and DATABASE_URL is correct")
 
 # Shutdown event (like onModuleDestroy in NestJS)
 @app.on_event("shutdown")

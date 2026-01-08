@@ -18,10 +18,15 @@ httpx==0.26.0
 # langchain==0.1.6
 # chromadb==0.4.22
 
-# Embeddings and LLMs (uncomment when ready)
-# openai==1.10.0
-# sentence-transformers==2.3.1
+# Embeddings and LLMs (optional)
+# openai==1.10.0  # Uncomment if using OpenAI instead of Ollama
+# sentence-transformers==2.3.1  # Uncomment for local embeddings
 
 # Document processing
 pypdf==4.0.0
+
+# Database
+sqlalchemy==2.0.25
+psycopg2-binary==2.9.9  # PostgreSQL adapter
+pgvector==0.2.4  # Vector extension support
 

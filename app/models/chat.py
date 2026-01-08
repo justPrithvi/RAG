@@ -17,10 +17,13 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     """
     Chat request from frontend
+    
+    userId is required for new conversations (conversationId=null)
+    userId is optional for existing conversations (we look it up from DB)
     """
     message: str
     conversationId: Optional[str] = None
-    userId: Optional[str] = None
+    userId: Optional[str] = None  # Required for new conv, optional for existing
 
 
 class ChatResponse(BaseModel):

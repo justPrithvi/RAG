@@ -29,9 +29,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
             "/docs",
             "/redoc",
             "/openapi.json",
-            "/api/health",
-            "/api/chat"  # Temporarily disabled auth for testing,
-            "/api/conversations"
+            "/api/health"
+            # Remove /api/chat and /api/conversations to enable auth
         ]
     
     async def dispatch(self, request: Request, call_next):

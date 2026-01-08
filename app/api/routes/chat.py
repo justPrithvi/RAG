@@ -49,16 +49,31 @@ async def chat(request: Request, chat_request: ChatRequest, db: Session = Depend
         conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
         
         if not conversation:
-            # Create new conversation
+            # NEW CONVERSATION: userId is REQUIRED
+            if not chat_request.userId:
+                raise HTTPException(
+                    status_code=400,
+                    detail="userId is required when creating a new conversation"
+                )
+            
+            # Create new conversation (userId saved here - ONLY ONCE)
             conversation = Conversation(
                 id=conversation_id,
-                user_id=chat_request.userId or (user.get("id") if user else None),
+                user_id=chat_request.userId,
                 title=chat_request.message[:50] + ("..." if len(chat_request.message) > 50 else "")
             )
             db.add(conversation)
             db.commit()
             db.refresh(conversation)
         else:
+            # EXISTING CONVERSATION: Verify ownership (if userId provided)
+            if chat_request.userId:
+                if conversation.user_id != chat_request.userId:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="You don't have access to this conversation"
+                    )
+            
             # Update timestamp for existing conversation
             conversation.updated_at = datetime.now()
             db.commit()
@@ -182,22 +197,27 @@ async def chat(request: Request, chat_request: ChatRequest, db: Session = Depend
 
 
 @router.get("/conversations")
-async def get_all_conversations(userId: str = None, db: Session = Depends(get_db)):
+async def get_all_conversations(request: Request, userId: str, db: Session = Depends(get_db)):
     """
-    Get all conversations with metadata from database
+    Get all conversations for a specific user from database
     
     Query params:
-    - userId (optional): Filter conversations by user ID
+    - userId (required): User ID to filter conversations
     
     Returns list of conversations sorted by most recent
     """
-    # Query conversations from database
-    query = db.query(Conversation)
+    # Get authenticated user (from middleware) for additional security
+    auth_user = getattr(request.state, "user", None)
     
-    if userId:
-        query = query.filter(Conversation.user_id == userId)
+    # Optional: Verify userId matches authenticated user
+    # if auth_user and auth_user.get("id") != userId:
+    #     raise HTTPException(status_code=403, detail="Cannot access other user's conversations")
     
-    conversations_db = query.order_by(Conversation.updated_at.desc()).all()
+    # Query conversations for this user only
+    conversations_db = db.query(Conversation)\
+        .filter(Conversation.user_id == userId)\
+        .order_by(Conversation.updated_at.desc())\
+        .all()
     
     conversation_list = []
     

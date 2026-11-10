@@ -1,50 +1,46 @@
 """
-Configuration settings
-Think of this like your ConfigService in NestJS
+Application Configuration
 """
 from pydantic_settings import BaseSettings
 from typing import List
 
 
 class Settings(BaseSettings):
-    """
-    Application settings loaded from environment variables
-    Similar to @nestjs/config ConfigService
-    """
-    # Environment
-    ENVIRONMENT: str = "development"
+    """Application settings loaded from environment variables"""
     
-    # Server
+    ENVIRONMENT: str = "development"
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     
-    # CORS
     ALLOWED_ORIGINS: List[str] = [
-        "http://localhost:3000",  # React dev server
-        "http://localhost:3001",  # NestJS backend
+        "http://localhost:3000",
+        "http://localhost:3001",
     ]
     
-    # Authentication
-    AUTH_SERVICE_URL: str = "http://localhost:5001"  # NestJS auth service
-    
-    # Database
-    # @ symbol in password is URL-encoded as %40
+    AUTH_SERVICE_URL: str = "http://localhost:5001"
+
+    # Java document service (Datavault-FileMaster): source of uploaded files for ingestion
+    FILEMASTER_API_URL: str = "http://localhost:8080"
+    # Shared secret with FileMaster, sent as X-Service-Key. Set in .env, never commit it.
+    INTERNAL_SERVICE_KEY: str = ""
+    FILEMASTER_TIMEOUT: float = 60.0
+    # Largest file Python will download for ingestion (bytes). Default 200 MB.
+    MAX_INGEST_FILE_BYTES: int = 200 * 1024 * 1024
+    # How many chunks to send to the embedding model per request
+    EMBEDDING_BATCH_SIZE: int = 32
     DATABASE_URL: str = "postgresql://prithviraj:Prithvi%4012345@localhost:5432/data_vault"
     
-    # Ollama (Local LLM)
     OLLAMA_BASE_URL: str = "http://localhost:11434"
-    OLLAMA_MODEL: str = "llama3.2:3b"  # Your installed model
-    MAX_CONTEXT_MESSAGES: int = 10  # Number of recent messages to send to LLM (prevents token limits)
+    OLLAMA_MODEL: str = "llama3.2:3b"
+    OLLAMA_TIMEOUT: float = 60.0
+    EMBEDDING_MODEL: str = "nomic-embed-text"
+    EMBEDDING_DIMENSIONS: int = 768
+    MAX_CONTEXT_MESSAGES: int = 10
     
-    # Response control
-    MAX_RESPONSE_TOKENS: int = 200  # Buffer room to complete thoughts naturally
-    RESPONSE_TEMPERATURE: float = 0.7  # Creativity (0.0-2.0, lower = more focused)
-    MIN_RESPONSE_TOKENS: int = 50  # Minimum response length
+    MAX_RESPONSE_TOKENS: int = 200
+    RESPONSE_TEMPERATURE: float = 0.7
+    MIN_RESPONSE_TOKENS: int = 50
     
-    # Vector DB (will add later)
-    # VECTOR_DB_URL: str = ""
-    
-    # API Keys (optional, for OpenAI if needed later)
     OPENAI_API_KEY: str = ""
     
     class Config:
@@ -52,6 +48,4 @@ class Settings(BaseSettings):
         case_sensitive = True
 
 
-# Singleton instance (like exporting from a config module)
 settings = Settings()
-

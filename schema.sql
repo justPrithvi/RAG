@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS document_chunks (
     document_id VARCHAR NOT NULL,
     chunk_index INTEGER NOT NULL,
     content TEXT NOT NULL,
-    embedding vector(384),  -- 384 dimensions for all-MiniLM-L6-v2 model
+    embedding vector(768) NOT NULL,  -- 768 dimensions for nomic-embed-text model
     chunk_metadata TEXT,  -- Renamed from 'metadata' to avoid SQLAlchemy conflict
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
@@ -51,6 +51,26 @@ CREATE INDEX IF NOT EXISTS idx_document_chunks_document_id ON document_chunks(do
 CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding 
 ON document_chunks USING ivfflat (embedding vector_cosine_ops)
 WITH (lists = 100);
+
+-- =====================================================
+-- Document Chat Messages Table
+-- =====================================================
+-- Stores chat messages for document conversations (RAG)
+-- Conversation identifier: document_id + user_id combination
+
+CREATE TABLE IF NOT EXISTS document_chats (
+    id SERIAL PRIMARY KEY,
+    document_id VARCHAR NOT NULL,  -- References document in main app
+    user_id VARCHAR NOT NULL,      -- User who sent the message
+    role VARCHAR(20) NOT NULL,     -- 'user' or 'agent'
+    content TEXT NOT NULL,         -- Message content
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+-- Indexes for better query performance
+CREATE INDEX IF NOT EXISTS idx_document_chats_document_id ON document_chats(document_id);
+CREATE INDEX IF NOT EXISTS idx_document_chats_user_id ON document_chats(user_id);
+CREATE INDEX IF NOT EXISTS idx_document_chats_document_user ON document_chats(document_id, user_id);
 
 -- Trigger to auto-update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()

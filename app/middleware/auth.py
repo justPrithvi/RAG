@@ -2,7 +2,7 @@
 Authentication Middleware
 Validates JWT tokens with the main NestJS backend
 """
-from fastapi import Request, HTTPException, status
+from fastapi import Request, status
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 import httpx
@@ -11,41 +11,26 @@ import httpx
 class AuthMiddleware(BaseHTTPMiddleware):
     """
     Middleware to validate JWT tokens with NestJS backend
-    
-    Flow:
-    1. Extract Bearer token from Authorization header
-    2. Call NestJS validation endpoint
-    3. If valid, proceed with request
-    4. If invalid, return 401 Unauthorized
     """
     
     def __init__(self, app, auth_service_url: str):
         super().__init__(app)
         self.auth_service_url = auth_service_url
-        
-        # Public routes that don't need authentication
         self.public_routes = [
             "/",
             "/docs",
             "/redoc",
             "/openapi.json",
             "/api/health"
-            # Remove /api/chat and /api/conversations to enable auth
         ]
     
     async def dispatch(self, request: Request, call_next):
-        """
-        Process each request
-        """
-        # Skip authentication for OPTIONS requests (CORS preflight)
         if request.method == "OPTIONS":
             return await call_next(request)
         
-        # Skip authentication for public routes
         if request.url.path in self.public_routes:
             return await call_next(request)
         
-        # Extract Authorization header
         auth_header = request.headers.get("Authorization")
         
         if not auth_header:
@@ -57,7 +42,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 }
             )
         
-        # Check if it's a Bearer token
         if not auth_header.startswith("Bearer "):
             return JSONResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -67,16 +51,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 }
             )
         
-        # Extract token
         token = auth_header.replace("Bearer ", "")
         
-        # Validate token with NestJS backend
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(
                     f"{self.auth_service_url}/auth/validate",
                     headers={"Authorization": f"Bearer {token}"},
-                    timeout=5.0  # 5 second timeout
+                    timeout=5.0
                 )
                 
                 if response.status_code != 200:
@@ -88,7 +70,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
                         }
                     )
                 
-                # Token is valid, attach user info to request state
                 user_data = response.json()
                 request.state.user = user_data
                 
@@ -117,7 +98,5 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 }
             )
         
-        # Proceed with the request
         response = await call_next(request)
         return response
-

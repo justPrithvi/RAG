@@ -1,84 +1,60 @@
 """
 Chat Routes
-Handles chat/prompt endpoints for LLM interaction
-Uses local Ollama model with PostgreSQL persistence
+Handles general chat and document-specific chat with RAG
 """
 from fastapi import APIRouter, HTTPException, Request, Depends
+from pydantic import BaseModel, field_validator
+from typing import Optional, List, Union
 from sqlalchemy.orm import Session
+from datetime import datetime
+import uuid
+
+from app.api.deps import CurrentUser, get_current_user
+from app.services.document_access import require_document_access
 from app.models.chat import ChatRequest, ChatResponse
-from app.models.db_models import Conversation, Message
+from app.models.db_models import Conversation, Message, DocumentChatMessage
 from app.database import get_db
+from app.services.llm_service import llm_service
+from app.services.vector_search_service import vector_search_service
 from app.config import settings
 import httpx
-import uuid
-from datetime import datetime
 
 router = APIRouter()
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: Request, chat_request: ChatRequest, db: Session = Depends(get_db)):
+async def chat(
+    chat_request: ChatRequest,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
-    Send a prompt to the LLM and get a response
-    Uses local Ollama model (llama3)
-    
-    Request body:
-    {
-        "message": "User's question",
-        "conversationId": "optional-conversation-id",
-        "userId": "optional-user-id"
-    }
-    
-    Response:
-    {
-        "response": "LLM's answer",
-        "conversationId": "conversation-id",
-        "userId": "user-id",
-        "model": "llama3",
-        "tokens_used": null
-    }
+    General chat endpoint with conversation persistence.
+    The conversation owner is the Nest-validated user; any userId in the body is ignored.
     """
     try:
-        # Get authenticated user (from middleware)
-        user = getattr(request.state, "user", None)
-        
-        # Generate conversationId if not provided
-        conversation_id = chat_request.conversationId or str(uuid.uuid4())
-        
-        # Get or create conversation in database
-        conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
-        
-        if not conversation:
-            # NEW CONVERSATION: userId is REQUIRED
-            if not chat_request.userId:
-                raise HTTPException(
-                    status_code=400,
-                    detail="userId is required when creating a new conversation"
-                )
-            
-            # Create new conversation (userId saved here - ONLY ONCE)
+        if chat_request.conversationId:
+            conversation = db.query(Conversation)\
+                .filter(Conversation.id == chat_request.conversationId)\
+                .first()
+            # Someone else's conversation looks the same as a missing one
+            if not conversation or conversation.user_id != user.id_str:
+                raise HTTPException(status_code=404, detail="Conversation not found")
+
+            conversation.updated_at = datetime.now()
+            db.commit()
+        else:
             conversation = Conversation(
-                id=conversation_id,
-                user_id=chat_request.userId,
+                id=str(uuid.uuid4()),
+                user_id=user.id_str,
                 title=chat_request.message[:50] + ("..." if len(chat_request.message) > 50 else "")
             )
             db.add(conversation)
             db.commit()
             db.refresh(conversation)
-        else:
-            # EXISTING CONVERSATION: Verify ownership (if userId provided)
-            if chat_request.userId:
-                if conversation.user_id != chat_request.userId:
-                    raise HTTPException(
-                        status_code=403,
-                        detail="You don't have access to this conversation"
-                    )
-            
-            # Update timestamp for existing conversation
-            conversation.updated_at = datetime.now()
-            db.commit()
+
+        conversation_id = conversation.id
         
-        # Save user message to database
         user_message = Message(
             conversation_id=conversation_id,
             role="user",
@@ -87,23 +63,19 @@ async def chat(request: Request, chat_request: ChatRequest, db: Session = Depend
         db.add(user_message)
         db.commit()
         
-        # Get recent message history from database for context
         recent_messages = db.query(Message)\
             .filter(Message.conversation_id == conversation_id)\
             .order_by(Message.created_at.desc())\
             .limit(settings.MAX_CONTEXT_MESSAGES)\
             .all()
         
-        # Reverse to get chronological order
         recent_messages = list(reversed(recent_messages))
         
-        # Convert database messages to format for LLM
         context_for_llm = [
             {"role": msg.role, "content": msg.content}
             for msg in recent_messages
         ]
         
-        # Add system message to encourage concise, complete responses
         system_message = {
             "role": "system",
             "content": (
@@ -113,23 +85,22 @@ async def chat(request: Request, chat_request: ChatRequest, db: Session = Depend
             )
         }
         
-        # Prepare Ollama request with limited context
         ollama_request = {
             "model": settings.OLLAMA_MODEL,
-            "messages": [system_message] + context_for_llm,  # System message + context
+            "messages": [system_message] + context_for_llm,
             "stream": False,
             "options": {
-                "num_predict": settings.MAX_RESPONSE_TOKENS,  # Max tokens (with buffer for completion)
-                "temperature": settings.RESPONSE_TEMPERATURE,  # Control randomness
-                "stop": ["\n\n\n"],  # Stop at natural breaks (3 newlines = end of thought)
+                "num_predict": settings.MAX_RESPONSE_TOKENS,
+                "temperature": settings.RESPONSE_TEMPERATURE,
+                "stop": ["\n\n\n"]
             }
         }
-        # Call Ollama API
+        
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{settings.OLLAMA_BASE_URL}/api/chat",
                 json=ollama_request,
-                timeout=60.0  # Ollama can take a while
+                timeout=60.0
             )
             
             if response.status_code != 200:
@@ -139,7 +110,7 @@ async def chat(request: Request, chat_request: ChatRequest, db: Session = Depend
                 )
             
             ollama_response = response.json()
-        # Extract the assistant's message
+        
         assistant_message = ollama_response.get("message", {}).get("content", "")
         
         if not assistant_message:
@@ -148,7 +119,6 @@ async def chat(request: Request, chat_request: ChatRequest, db: Session = Depend
                 detail="No response from Ollama model"
             )
         
-        # Save assistant's response to database
         assistant_msg = Message(
             conversation_id=conversation_id,
             role="assistant",
@@ -157,7 +127,6 @@ async def chat(request: Request, chat_request: ChatRequest, db: Session = Depend
         db.add(assistant_msg)
         db.commit()
         
-        # Get FULL conversation history from database (for UI display)
         all_messages = db.query(Message)\
             .filter(Message.conversation_id == conversation_id)\
             .order_by(Message.created_at.asc())\
@@ -169,12 +138,12 @@ async def chat(request: Request, chat_request: ChatRequest, db: Session = Depend
         ]
         
         return ChatResponse(
-            response=assistant_message,  # Last assistant message
-            messages=messages_response,  # Full conversation history
-            conversationId=conversation_id,  # Return the conversationId (generated or provided)
-            userId=chat_request.userId or (user.get("id") if user else None),
+            response=assistant_message,
+            messages=messages_response,
+            conversationId=conversation_id,
+            userId=user.id_str,
             model=settings.OLLAMA_MODEL,
-            tokens_used=None  # Ollama doesn't return token count
+            tokens_used=None
         )
     
     except httpx.TimeoutException:
@@ -197,32 +166,22 @@ async def chat(request: Request, chat_request: ChatRequest, db: Session = Depend
 
 
 @router.get("/conversations")
-async def get_all_conversations(request: Request, userId: str, db: Session = Depends(get_db)):
+async def get_all_conversations(
+    userId: Optional[str] = None,  # still sent by the UI; ignored
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
-    Get all conversations for a specific user from database
-    
-    Query params:
-    - userId (required): User ID to filter conversations
-    
-    Returns list of conversations sorted by most recent
+    Get all conversations for the authenticated user
     """
-    # Get authenticated user (from middleware) for additional security
-    auth_user = getattr(request.state, "user", None)
-    
-    # Optional: Verify userId matches authenticated user
-    # if auth_user and auth_user.get("id") != userId:
-    #     raise HTTPException(status_code=403, detail="Cannot access other user's conversations")
-    
-    # Query conversations for this user only
     conversations_db = db.query(Conversation)\
-        .filter(Conversation.user_id == userId)\
+        .filter(Conversation.user_id == user.id_str)\
         .order_by(Conversation.updated_at.desc())\
         .all()
     
     conversation_list = []
     
     for conv in conversations_db:
-        # Get message count and last message
         messages = db.query(Message)\
             .filter(Message.conversation_id == conv.id)\
             .order_by(Message.created_at.asc())\
@@ -251,15 +210,17 @@ async def get_all_conversations(request: Request, userId: str, db: Session = Dep
 
 
 @router.delete("/chat/{conversation_id}")
-async def delete_conversation(conversation_id: str, db: Session = Depends(get_db)):
+async def delete_conversation(
+    conversation_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
-    Delete a conversation and all its messages from database
-    
-    CASCADE delete handles removing all related messages
+    Delete one of the authenticated user's conversations and all its messages
     """
     conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
-    
-    if not conversation:
+
+    if not conversation or conversation.user_id != user.id_str:
         raise HTTPException(
             status_code=404,
             detail="Conversation not found"
@@ -275,15 +236,17 @@ async def delete_conversation(conversation_id: str, db: Session = Depends(get_db
 
 
 @router.get("/chat/{conversation_id}/history")
-async def get_conversation_history(conversation_id: str, db: Session = Depends(get_db)):
+async def get_conversation_history(
+    conversation_id: str,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
-    Get conversation history from database
-    
-    Returns all messages in a conversation
+    Get the history of one of the authenticated user's conversations
     """
     conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
-    
-    if not conversation:
+
+    if not conversation or conversation.user_id != user.id_str:
         raise HTTPException(
             status_code=404,
             detail="Conversation not found"
@@ -303,3 +266,144 @@ async def get_conversation_history(conversation_id: str, db: Session = Depends(g
         "message_count": len(messages)
     }
 
+
+class DocumentChatRequest(BaseModel):
+    """Request model for document chat"""
+    message: str
+    documentId: Union[str, int]
+    userId: Optional[Union[str, int]] = None  # still sent by the UI; ignored
+    conversationId: Optional[str] = None
+    
+    @field_validator('documentId')
+    @classmethod
+    def convert_document_id_to_str(cls, v):
+        return str(v)
+
+
+class DocumentChatResponse(BaseModel):
+    """Response model for document chat"""
+    response: str
+    documentId: str
+    userId: str
+    conversationId: str
+    relevantChunks: Optional[list] = None
+
+
+@router.post("/chat/document", response_model=DocumentChatResponse)
+async def chat_with_document(
+    request: Request,
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Chat with a specific document using RAG
+
+    Flow:
+    0. Check the authenticated user owns the document (or is an admin), else 404
+    1. Embed user's question
+    2. Vector search for relevant chunks
+    3. Build context from chunks
+    4. Send to LLM with context
+    5. Return AI response
+    """
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="Invalid JSON in request body")
+    
+    try:
+        chat_request = DocumentChatRequest(**body)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Validation error: {str(e)}")
+
+    require_document_access(db, chat_request.documentId, user)
+
+    user_message = DocumentChatMessage(
+        document_id=chat_request.documentId,
+        user_id=user.id_str,
+        role="user",
+        content=chat_request.message
+    )
+    db.add(user_message)
+    db.commit()
+    
+    try:
+        relevant_chunks = await vector_search_service.search_similar_chunks(
+            query_text=chat_request.message,
+            document_id=chat_request.documentId,
+            db=db,
+            top_k=10,
+            similarity_threshold=0.3
+        )
+        
+        context = vector_search_service.build_context(relevant_chunks)
+        
+        agent_response = await llm_service.chat_with_context(
+            question=chat_request.message,
+            context=context,
+            max_tokens=350
+        )
+        
+    except Exception as e:
+        agent_response = f"Error processing request: {str(e)}"
+    
+    agent_message = DocumentChatMessage(
+        document_id=chat_request.documentId,
+        user_id=user.id_str,
+        role="agent",
+        content=agent_response
+    )
+    db.add(agent_message)
+    db.commit()
+
+    return DocumentChatResponse(
+        response=agent_response,
+        documentId=chat_request.documentId,
+        userId=user.id_str,
+        conversationId=f"{chat_request.documentId}_{user.id_str}",
+        relevantChunks=[
+            {
+                "content": chunk["content"][:200] + "..." if len(chunk["content"]) > 200 else chunk["content"],
+                "similarity_score": chunk["similarity_score"],
+                "chunk_index": chunk["chunk_index"]
+            }
+            for chunk in relevant_chunks
+        ]
+    )
+
+
+@router.get("/document-chat/history")
+async def get_document_chat_history(
+    documentId: str,
+    userId: Optional[str] = None,  # still sent by the UI; ignored
+    user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get the authenticated user's chat history for a document they can access
+    """
+    require_document_access(db, documentId, user)
+
+    messages = db.query(DocumentChatMessage)\
+        .filter(
+            DocumentChatMessage.document_id == documentId,
+            DocumentChatMessage.user_id == user.id_str
+        )\
+        .order_by(DocumentChatMessage.created_at.asc())\
+        .all()
+
+    return {
+        "documentId": documentId,
+        "userId": user.id_str,
+        "conversationId": f"{documentId}_{user.id_str}",
+        "messageCount": len(messages),
+        "messages": [
+            {
+                "id": msg.id,
+                "role": msg.role,
+                "content": msg.content,
+                "createdAt": msg.created_at.isoformat()
+            }
+            for msg in messages
+        ]
+    }

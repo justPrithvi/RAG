@@ -86,8 +86,8 @@ class DocumentChunk(Base):
     content = Column(Text, nullable=False)
     
     # Vector embedding (pgvector)
-    # Dimension depends on your embedding model (e.g., 384 for all-MiniLM-L6-v2)
-    embedding = Column(Vector(384), nullable=True)  # Will add embeddings later
+    # nomic-embed-text produces 768-dimensional embeddings
+    embedding = Column(Vector(768), nullable=False)
     
     # Metadata (renamed from 'metadata' to avoid SQLAlchemy conflict)
     chunk_metadata = Column(Text, nullable=True)  # JSON string
@@ -97,4 +97,32 @@ class DocumentChunk(Base):
     
     def __repr__(self):
         return f"<DocumentChunk(id={self.id}, document_id={self.document_id}, chunk={self.chunk_index})>"
+
+
+# Document Chat Messages
+class DocumentChatMessage(Base):
+    """
+    Chat messages for document conversations (RAG)
+    Each document can have multiple conversations from different users
+    """
+    __tablename__ = "document_chats"
+    
+    # Primary key
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    
+    # Foreign key (references document in main app)
+    document_id = Column(String, nullable=False, index=True)
+    
+    # User info
+    user_id = Column(String, nullable=False, index=True)
+    
+    # Message content
+    role = Column(String(20), nullable=False)  # 'user' or 'agent'
+    content = Column(Text, nullable=False)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    
+    def __repr__(self):
+        return f"<DocumentChatMessage(id={self.id}, document_id={self.document_id}, role={self.role})>"
 
